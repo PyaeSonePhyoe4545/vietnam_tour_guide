@@ -253,4 +253,4 @@ This project is licensed under the MIT License.
 
 ## 📞 Support
 
-For support, email support@vietnamtourguide.com or create an issue in this repository.
+For support, email pyaesonephyoe.utycc@gmail.com or create an issue in this repository.
