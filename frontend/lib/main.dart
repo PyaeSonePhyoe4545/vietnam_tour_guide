@@ -1,5 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'core/services/api_service.dart';
+import 'features/destinations/bloc/destinations_bloc.dart';
+import 'features/destinations/bloc/destinations_event.dart';
+import 'features/destinations/bloc/destinations_state.dart';
+import 'features/destinations/repositories/destination_repository.dart';
+import 'features/accommodations/bloc/accommodations_bloc.dart';
+import 'features/accommodations/bloc/accommodations_event.dart';
+import 'features/accommodations/bloc/accommodations_state.dart';
+import 'features/accommodations/repositories/accommodation_repository.dart';
 
 void main() {
   runApp(const VietnamTourGuideApp());
@@ -10,62 +19,36 @@ class VietnamTourGuideApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final apiService = ApiService();
+    final destinationRepository = DestinationRepository(apiService);
+    final accommodationRepository = AccommodationRepository(apiService);
+
     return MaterialApp(
       title: 'Vietnam Tour Guide',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
       ),
-      home: const HomePage(),
+      home: MultiBlocProvider(
+        providers: [
+          BlocProvider(
+            create: (context) => DestinationsBloc(destinationRepository)
+              ..add(LoadDestinations()),
+          ),
+          BlocProvider(
+            create: (context) => AccommodationsBloc(accommodationRepository)
+              ..add(LoadAccommodations()),
+          ),
+        ],
+        child: const HomePage(),
+      ),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class HomePage extends StatefulWidget {
+class HomePage extends StatelessWidget {
   const HomePage({super.key});
-
-  @override
-  State<HomePage> createState() => _HomePageState();
-}
-
-class _HomePageState extends State<HomePage> {
-  final Dio _dio = Dio();
-  List<dynamic> destinations = [];
-  List<dynamic> accommodations = [];
-  bool isLoading = true;
-  String? error;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchData();
-  }
-
-  Future<void> _fetchData() async {
-    try {
-      setState(() {
-        isLoading = true;
-        error = null;
-      });
-
-      final destinationsResponse =
-          await _dio.get('http://localhost:3001/destinations');
-      final accommodationsResponse =
-          await _dio.get('http://localhost:3001/accommodations');
-
-      setState(() {
-        destinations = destinationsResponse.data;
-        accommodations = accommodationsResponse.data;
-        isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        error = 'Failed to fetch data: ${e.toString()}';
-        isLoading = false;
-      });
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,45 +60,113 @@ class _HomePageState extends State<HomePage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _fetchData,
+            onPressed: () {
+              context.read<DestinationsBloc>().add(RefreshDestinations());
+              context.read<AccommodationsBloc>().add(RefreshAccommodations());
+            },
           ),
         ],
       ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : error != null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.error, size: 64, color: Colors.red),
-                      const SizedBox(height: 16),
-                      Text(error!, textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: _fetchData,
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                )
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildWelcomeSection(),
-                      const SizedBox(height: 32),
-                      _buildDestinationsSection(),
-                      const SizedBox(height: 32),
-                      _buildAccommodationsSection(),
-                    ],
-                  ),
+      body: BlocBuilder<DestinationsBloc, DestinationsState>(
+        builder: (context, destinationsState) {
+          return BlocBuilder<AccommodationsBloc, AccommodationsState>(
+            builder: (context, accommodationsState) {
+              // Show loading if either is loading
+              if (destinationsState is DestinationsLoading ||
+                  accommodationsState is AccommodationsLoading) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              // Show error if either has error
+              if (destinationsState is DestinationsError) {
+                return _buildErrorWidget(
+                  context,
+                  'Failed to fetch destinations: ${destinationsState.message}',
+                );
+              }
+
+              if (accommodationsState is AccommodationsError) {
+                return _buildErrorWidget(
+                  context,
+                  'Failed to fetch accommodations: ${accommodationsState.message}',
+                );
+              }
+
+              // Build UI with loaded data
+              final destinations = destinationsState is DestinationsLoaded
+                  ? destinationsState.destinations
+                      .map((dest) => {
+                            'id': dest.id,
+                            'name': dest.name,
+                            'description': dest.description,
+                            'city': dest.city,
+                            'province': dest.province,
+                            'category': dest.category,
+                            'rating': dest.rating,
+                            'reviewCount': dest.reviewCount,
+                          })
+                      .toList()
+                  : <dynamic>[];
+              final accommodations = accommodationsState is AccommodationsLoaded
+                  ? accommodationsState.accommodations
+                      .map((acc) => {
+                            'id': acc.id,
+                            'name': acc.name,
+                            'description': acc.description,
+                            'city': acc.city,
+                            'province': acc.province,
+                            'type': acc.type,
+                            'starRating': acc.starRating,
+                            'rating': acc.rating,
+                            'reviewCount': acc.reviewCount,
+                            'pricePerNight': acc.pricePerNight,
+                          })
+                      .toList()
+                  : <dynamic>[];
+
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildWelcomeSection(
+                        destinations.length, accommodations.length),
+                    const SizedBox(height: 32),
+                    _buildDestinationsSection(destinations),
+                    const SizedBox(height: 32),
+                    _buildAccommodationsSection(accommodations),
+                  ],
                 ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
-  Widget _buildWelcomeSection() {
+  Widget _buildErrorWidget(BuildContext context, String error) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.error, size: 64, color: Colors.red),
+          const SizedBox(height: 16),
+          Text(error, textAlign: TextAlign.center),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: () {
+              context.read<DestinationsBloc>().add(RefreshDestinations());
+              context.read<AccommodationsBloc>().add(RefreshAccommodations());
+            },
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWelcomeSection(int destinationsCount, int accommodationsCount) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
@@ -141,7 +192,7 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Discover ${destinations.length} amazing destinations and ${accommodations.length} accommodations',
+            'Discover $destinationsCount amazing destinations and $accommodationsCount accommodations',
             style: const TextStyle(
               fontSize: 16,
               color: Colors.white70,
@@ -153,7 +204,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildDestinationsSection() {
+  Widget _buildDestinationsSection(List<dynamic> destinations) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -186,7 +237,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildAccommodationsSection() {
+  Widget _buildAccommodationsSection(List<dynamic> accommodations) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

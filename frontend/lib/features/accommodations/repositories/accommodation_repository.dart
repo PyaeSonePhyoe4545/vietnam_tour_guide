@@ -1,6 +1,6 @@
 import '../../../core/services/api_service.dart';
 import '../../../core/config/api_config.dart';
-import '../models/accommodation.dart';
+import '../models/accommodation_simple.dart';
 
 class AccommodationRepository {
   final ApiService _apiService;
